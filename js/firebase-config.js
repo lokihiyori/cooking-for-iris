@@ -21,11 +21,11 @@
  */
 
 const FIREBASE_CONFIG = {
-  apiKey: "",
-  authDomain: "",
-  databaseURL: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: ""
+  apiKey: "AIzaSyDGvp8e0DGh7zOrrbNoGMXWKzGlzMbSXt0",
+  authDomain: "cooking-for-iris.firebaseapp.com",
+  databaseURL: "https://cooking-for-iris-default-rtdb.firebaseio.com",
+  projectId: "cooking-for-iris",
+  storageBucket: "cooking-for-iris.firebasestorage.app",
+  messagingSenderId: "856580882052",
+  appId: "1:856580882052:web:1e953d236d73bb337c4cd1"
 };
