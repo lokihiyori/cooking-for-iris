@@ -80,7 +80,7 @@
     <div class="modal-overlay" id="dish-modal" onclick="closeModal(event)">
       <div class="modal-content" onclick="event.stopPropagation()">
         <button class="modal-close" onclick="closeDishModal()">✕</button>
-        <div class="modal-emoji" id="modal-emoji"></div>
+        <div class="modal-hero" id="modal-hero"></div>
         <h2 id="modal-title"></h2>
         <p class="modal-desc" id="modal-description"></p>
         <div class="modal-meta">
@@ -128,6 +128,18 @@
           <div class="form-group">
             <label>Dish Name</label>
             <input type="text" id="dish-name" required placeholder="e.g. Chicken Alfredo">
+          </div>
+          <div class="form-group">
+            <label>Dish Photo (optional)</label>
+            <div class="photo-upload-area" id="photo-upload-area" onclick="document.getElementById('dish-photo').click()">
+              <input type="file" id="dish-photo" accept="image/*" onchange="handlePhotoUpload(event)" hidden>
+              <div class="photo-upload-placeholder" id="photo-placeholder">
+                <span>📷</span>
+                <p>Click to upload a photo</p>
+              </div>
+              <img id="photo-preview" class="photo-preview" src="" alt="" style="display:none">
+              <button type="button" class="photo-remove-btn" id="photo-remove-btn" onclick="event.stopPropagation(); removePhoto()" style="display:none">✕</button>
+            </div>
           </div>
           <div class="form-row">
             <div class="form-group">

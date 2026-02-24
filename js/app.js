@@ -9,6 +9,7 @@ let orders = [];
 let currentFilter = 'All';
 let currentDishId = null;
 let editingDishId = null;
+let pendingPhotoData = null;
 
 let db = null;
 let useFirebase = false;
@@ -109,6 +110,120 @@ function getNextOrderId() {
 }
 
 /* ========================================
+   Photo Handling
+   ======================================== */
+
+function compressImage(file, maxSize, quality) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let w = img.width;
+        let h = img.height;
+
+        if (w > maxSize || h > maxSize) {
+          if (w > h) {
+            h = Math.round((h * maxSize) / w);
+            w = maxSize;
+          } else {
+            w = Math.round((w * maxSize) / h);
+            h = maxSize;
+          }
+        }
+
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function handlePhotoUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  compressImage(file, 600, 0.7).then(dataUrl => {
+    pendingPhotoData = dataUrl;
+    const preview = document.getElementById('photo-preview');
+    const placeholder = document.getElementById('photo-placeholder');
+    const removeBtn = document.getElementById('photo-remove-btn');
+    const area = document.getElementById('photo-upload-area');
+
+    preview.src = dataUrl;
+    preview.style.display = 'block';
+    placeholder.style.display = 'none';
+    removeBtn.style.display = 'flex';
+    area.classList.add('has-photo');
+  });
+}
+
+function removePhoto() {
+  pendingPhotoData = '';
+  const preview = document.getElementById('photo-preview');
+  const placeholder = document.getElementById('photo-placeholder');
+  const removeBtn = document.getElementById('photo-remove-btn');
+  const area = document.getElementById('photo-upload-area');
+  const fileInput = document.getElementById('dish-photo');
+
+  preview.src = '';
+  preview.style.display = 'none';
+  placeholder.style.display = 'block';
+  removeBtn.style.display = 'none';
+  area.classList.remove('has-photo');
+  fileInput.value = '';
+}
+
+function resetPhotoUI() {
+  pendingPhotoData = null;
+  const preview = document.getElementById('photo-preview');
+  const placeholder = document.getElementById('photo-placeholder');
+  const removeBtn = document.getElementById('photo-remove-btn');
+  const area = document.getElementById('photo-upload-area');
+  const fileInput = document.getElementById('dish-photo');
+
+  preview.src = '';
+  preview.style.display = 'none';
+  placeholder.style.display = 'block';
+  removeBtn.style.display = 'none';
+  area.classList.remove('has-photo');
+  fileInput.value = '';
+}
+
+function dishTopHtml(dish) {
+  if (dish.photo) {
+    return `<div class="dish-card-top has-photo">
+      <span class="dish-category-tag">${dish.category}</span>
+      <img class="dish-card-photo" src="${dish.photo}" alt="${dish.name}" loading="lazy">
+    </div>`;
+  }
+  return `<div class="dish-card-top">
+    <span class="dish-category-tag">${dish.category}</span>
+    <span class="dish-emoji">${dish.emoji}</span>
+  </div>`;
+}
+
+function dishHeroHtml(dish) {
+  if (dish.photo) {
+    return `<img class="modal-hero-img" src="${dish.photo}" alt="${dish.name}">`;
+  }
+  return `<span class="modal-hero-emoji">${dish.emoji}</span>`;
+}
+
+function cartItemVisual(dish) {
+  if (dish.photo) {
+    return `<img class="cart-item-photo" src="${dish.photo}" alt="${dish.name}">`;
+  }
+  return `<span class="cart-item-emoji">${dish.emoji}</span>`;
+}
+
+/* ========================================
    Navigation
    ======================================== */
 
@@ -181,10 +296,7 @@ function renderMenu() {
 
   grid.innerHTML = filtered.map((dish, i) => `
     <div class="dish-card" style="animation-delay: ${i * 0.05}s" onclick="openDishDetail(${dish.id})">
-      <div class="dish-card-top">
-        <span class="dish-category-tag">${dish.category}</span>
-        <span class="dish-emoji">${dish.emoji}</span>
-      </div>
+      ${dishTopHtml(dish)}
       <div class="dish-card-body">
         <h3>${dish.name}</h3>
         <p>${dish.description}</p>
@@ -206,7 +318,7 @@ function openDishDetail(id) {
   if (!dish) return;
 
   currentDishId = id;
-  document.getElementById('modal-emoji').textContent = dish.emoji;
+  document.getElementById('modal-hero').innerHTML = dishHeroHtml(dish);
   document.getElementById('modal-title').textContent = dish.name;
   document.getElementById('modal-description').textContent = dish.description;
   document.getElementById('modal-time').textContent = '⏱ ' + dish.cookTime;
@@ -281,7 +393,7 @@ function renderCart() {
     if (!dish) return '';
     return `
       <div class="cart-item">
-        <span class="cart-item-emoji">${dish.emoji}</span>
+        ${cartItemVisual(dish)}
         <div class="cart-item-info">
           <h4>${dish.name}</h4>
           <p>${dish.category}</p>
@@ -438,6 +550,10 @@ function viewOrderRecipe(orderId) {
     const dish = dishes.find(d => d.id === item.dishId);
     if (!dish) return '';
 
+    const photoHtml = dish.photo
+      ? `<img class="recipe-dish-photo" src="${dish.photo}" alt="${dish.name}">`
+      : '';
+
     const ingredientsHtml = dish.ingredients.map(ing =>
       `<li>${ing}</li>`
     ).join('');
@@ -448,6 +564,7 @@ function viewOrderRecipe(orderId) {
 
     return `
       <div class="recipe-dish">
+        ${photoHtml}
         <div class="recipe-header">
           <span class="r-emoji">${dish.emoji}</span>
           <div>
@@ -495,17 +612,22 @@ function closeOrderDetail() {
 function renderAllDishes() {
   const list = document.getElementById('all-dishes-list');
 
-  list.innerHTML = dishes.map(dish => `
-    <div class="manage-dish-card">
-      <div class="manage-dish-emoji">${dish.emoji}</div>
-      <h3>${dish.name}</h3>
-      <p class="dish-cat">${dish.category} · ⏱ ${dish.cookTime}</p>
-      <div class="manage-dish-actions">
-        <button class="edit-dish-btn" onclick="editDish(${dish.id})">✏️ Edit</button>
-        <button class="delete-dish-btn" onclick="deleteDish(${dish.id})">🗑 Delete</button>
-      </div>
-    </div>
-  `).join('');
+  list.innerHTML = dishes.map(dish => {
+    const visual = dish.photo
+      ? `<img class="manage-dish-photo" src="${dish.photo}" alt="${dish.name}">`
+      : `<div class="manage-dish-emoji">${dish.emoji}</div>`;
+
+    return `
+      <div class="manage-dish-card">
+        ${visual}
+        <h3>${dish.name}</h3>
+        <p class="dish-cat">${dish.category} · ⏱ ${dish.cookTime}</p>
+        <div class="manage-dish-actions">
+          <button class="edit-dish-btn" onclick="editDish(${dish.id})">✏️ Edit</button>
+          <button class="delete-dish-btn" onclick="deleteDish(${dish.id})">🗑 Delete</button>
+        </div>
+      </div>`;
+  }).join('');
 }
 
 function switchChefTab(tab) {
@@ -526,6 +648,7 @@ function switchChefTab(tab) {
 function openAddDish() {
   editingDishId = null;
   document.getElementById('dish-form').reset();
+  resetPhotoUI();
   document.getElementById('add-dish-modal').classList.add('open');
 }
 
@@ -542,12 +665,28 @@ function editDish(id) {
   document.getElementById('dish-ingredients').value = dish.ingredients.join('\n');
   document.getElementById('dish-recipe').value = dish.recipe.join('\n');
 
+  resetPhotoUI();
+  if (dish.photo) {
+    pendingPhotoData = dish.photo;
+    const preview = document.getElementById('photo-preview');
+    const placeholder = document.getElementById('photo-placeholder');
+    const removeBtn = document.getElementById('photo-remove-btn');
+    const area = document.getElementById('photo-upload-area');
+
+    preview.src = dish.photo;
+    preview.style.display = 'block';
+    placeholder.style.display = 'none';
+    removeBtn.style.display = 'flex';
+    area.classList.add('has-photo');
+  }
+
   document.getElementById('add-dish-modal').classList.add('open');
 }
 
 function closeAddDish() {
   document.getElementById('add-dish-modal').classList.remove('open');
   editingDishId = null;
+  resetPhotoUI();
 }
 
 function saveDish(e) {
@@ -567,13 +706,20 @@ function saveDish(e) {
     const dish = dishes.find(d => d.id === editingDishId);
     if (dish) {
       Object.assign(dish, { name, emoji, category, description, cookTime, ingredients, recipe });
+      if (pendingPhotoData !== null) {
+        dish.photo = pendingPhotoData || '';
+      }
     }
     showToast('Dish updated! ✨');
   } else {
-    dishes.push({
+    const newDish = {
       id: getNextDishId(),
       name, emoji, category, description, cookTime, ingredients, recipe
-    });
+    };
+    if (pendingPhotoData) {
+      newDish.photo = pendingPhotoData;
+    }
+    dishes.push(newDish);
     showToast('New dish added! 🍽️');
   }
 

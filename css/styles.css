@@ -376,6 +376,23 @@ body {
   padding: 2rem;
   text-align: center;
   position: relative;
+  overflow: hidden;
+}
+
+.dish-card-top.has-photo {
+  padding: 0;
+  height: 200px;
+}
+
+.dish-card-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.4s ease;
+}
+
+.dish-card:hover .dish-card-photo {
+  transform: scale(1.08);
 }
 
 .dish-emoji {
@@ -534,6 +551,13 @@ body {
 
 .cart-item-emoji {
   font-size: 2rem;
+}
+
+.cart-item-photo {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  object-fit: cover;
 }
 
 .cart-item-info {
@@ -702,6 +726,23 @@ body {
   font-size: 4rem;
   text-align: center;
   margin-bottom: 1rem;
+}
+
+.modal-hero {
+  text-align: center;
+  margin-bottom: 1rem;
+}
+
+.modal-hero-img {
+  width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+  border-radius: var(--radius);
+  margin-bottom: 0.5rem;
+}
+
+.modal-hero-emoji {
+  font-size: 4rem;
 }
 
 .modal-content h2 {
@@ -1088,6 +1129,91 @@ body {
   display: grid;
   grid-template-columns: 1fr 2fr;
   gap: 1rem;
+}
+
+/* Photo Upload */
+
+.photo-upload-area {
+  border: 2px dashed rgba(139, 94, 60, 0.2);
+  border-radius: var(--radius);
+  padding: 1.5rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  position: relative;
+  background: var(--warm-white);
+  min-height: 140px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.photo-upload-area:hover {
+  border-color: var(--soft-orange);
+  background: rgba(255, 159, 90, 0.05);
+}
+
+.photo-upload-area.has-photo {
+  padding: 0;
+  border-style: solid;
+  border-color: rgba(139, 94, 60, 0.1);
+}
+
+.photo-upload-placeholder span {
+  font-size: 2.5rem;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.photo-upload-placeholder p {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.photo-preview {
+  width: 100%;
+  max-height: 220px;
+  object-fit: cover;
+  border-radius: calc(var(--radius) - 2px);
+}
+
+.photo-remove-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.5);
+  color: white;
+  font-size: 0.9rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease;
+}
+
+.photo-remove-btn:hover {
+  background: rgba(200, 0, 0, 0.7);
+}
+
+.recipe-dish-photo {
+  width: 100%;
+  max-height: 200px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  margin-bottom: 1rem;
+}
+
+.manage-dish-photo {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.5rem;
 }
 
 .save-dish-btn {
