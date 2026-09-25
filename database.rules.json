@@ -1,0 +1,18 @@
+{
+  "rules": {
+    "dishes": {
+      ".read": true,
+      "$dishId": {
+        ".write": "auth != null && auth.uid === 'REPLACE_WITH_CHEF_FIREBASE_UID'",
+        ".validate": "newData.child('deleted').val() === true || newData.hasChildren(['id', 'name', 'emoji', 'category', 'description', 'cookTime', 'ingredients', 'recipe'])"
+      }
+    },
+    "orders": {
+      ".read": "auth != null && auth.uid === 'REPLACE_WITH_CHEF_FIREBASE_UID'",
+      "$orderId": {
+        ".write": "(auth != null && auth.uid === 'REPLACE_WITH_CHEF_FIREBASE_UID') || (!data.exists() && newData.hasChildren(['id', 'items', 'status', 'timestamp']) && newData.child('status').val() === 'pending')",
+        ".validate": "newData.hasChildren(['id', 'items', 'status', 'timestamp']) && (newData.child('status').val() === 'pending' || newData.child('status').val() === 'cooking' || newData.child('status').val() === 'done')"
+      }
+    }
+  }
+}

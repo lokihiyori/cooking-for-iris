@@ -2,6 +2,7 @@ const DEFAULT_DISHES = [
   {
     id: 1,
     name: "Creamy Pasta Carbonara",
+    photo: "images/carbonara.webp",
     emoji: "🍝",
     category: "Pasta",
     description: "Rich and creamy Italian classic with crispy bacon, parmesan, and a silky egg sauce.",
@@ -31,6 +32,7 @@ const DEFAULT_DISHES = [
   {
     id: 2,
     name: "Chicken Teriyaki Bowl",
+    photo: "images/teriyaki.webp",
     emoji: "🍗",
     category: "Main Course",
     description: "Juicy glazed chicken thighs over fluffy rice with steamed veggies and sesame seeds.",
@@ -63,6 +65,7 @@ const DEFAULT_DISHES = [
   {
     id: 3,
     name: "Caesar Salad",
+    photo: "images/caesar-salad.webp",
     emoji: "🥗",
     category: "Salads",
     description: "Crisp romaine lettuce, crunchy croutons, shaved parmesan, and creamy Caesar dressing.",
@@ -92,6 +95,7 @@ const DEFAULT_DISHES = [
   {
     id: 4,
     name: "Hearty Beef Stew",
+    photo: "images/beef-stew.webp",
     emoji: "🥘",
     category: "Main Course",
     description: "Tender chunks of beef slow-cooked with root vegetables in a rich, savory broth.",
@@ -189,6 +193,7 @@ const DEFAULT_DISHES = [
   {
     id: 7,
     name: "Mushroom Risotto",
+    photo: "images/mushroom-risotto.webp",
     emoji: "🍄",
     category: "Main Course",
     description: "Luxuriously creamy Italian risotto with earthy mixed mushrooms and parmesan.",

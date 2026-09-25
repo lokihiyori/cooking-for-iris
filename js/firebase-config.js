@@ -11,7 +11,8 @@
  *  4. In your project, click "Build" > "Realtime Database" in the left sidebar
  *  5. Click "Create Database"
  *  6. Choose any location, click "Next"
- *  7. Select "Start in TEST MODE", click "Enable"
+ *  7. Create the database with locked rules. Apply database.rules.json
+ *     after enabling Google sign-in and replacing the chef UID.
  *  8. Now go to Project Settings (gear icon top-left) > "General" tab
  *  9. Scroll down to "Your apps" > click the "</>" (Web) icon
  * 10. Register the app (name it anything), do NOT check "Firebase Hosting"

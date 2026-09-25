@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#faf4ea">
   <title>Cooking for Iris 💕</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,27 +22,34 @@
       <div class="floating-emoji e6">❤️</div>
     </div>
     <div class="landing-content">
-      <h1 class="landing-title">Cooking for Iris</h1>
-      <p class="landing-subtitle">Made with love, served with heart</p>
-      <div class="landing-cards">
-        <button class="landing-card iris-card" onclick="enterAs('iris')">
-          <div class="card-emoji">👩‍🍳</div>
-          <h2>Iris's Menu</h2>
-          <p>Browse dishes & place your order</p>
-          <span class="card-btn">Open Menu →</span>
-        </button>
-        <div class="landing-heart">💕</div>
-        <button class="landing-card chef-card" onclick="enterAs('chef')">
-          <div class="card-emoji">👨‍🍳</div>
-          <h2>Chef Lucas</h2>
-          <p>View orders & manage dishes</p>
-          <span class="card-btn">Kitchen →</span>
-        </button>
+      <div class="landing-intro">
+        <div class="eyebrow">A LITTLE KITCHEN, MADE WITH LOVE</div>
+        <h1 class="landing-title">Cooking<br><em>for Iris.</em></h1>
+        <p class="landing-subtitle">Good food, lovely moments, and a menu just for you.</p>
+        <div class="landing-cards">
+          <button class="landing-card iris-card" onclick="enterAs('iris')">
+            <div class="card-emoji">👩‍🍳</div>
+            <h2>Iris's Menu</h2>
+            <p>Browse dishes & place your order</p>
+            <span class="card-btn">Open Menu →</span>
+          </button>
+          <button class="landing-card chef-card" onclick="enterAs('chef')">
+            <div class="card-emoji">👨‍🍳</div>
+            <h2>Chef Lucas</h2>
+            <p>View orders & manage dishes</p>
+            <span class="card-btn">Kitchen →</span>
+          </button>
+        </div>
+      </div>
+      <div class="landing-feature" aria-hidden="true">
+        <img src="images/carbonara.webp" alt="">
+        <span class="feature-sticker">made with<br><strong>♡ love</strong></span>
       </div>
     </div>
   </div>
 
   <!-- Iris Menu Page -->
+  <div id="sync-status" class="sync-status" role="status">Connecting to shared kitchen…</div>
   <div id="iris-page" class="page">
     <nav class="navbar iris-nav">
       <button class="back-btn" onclick="goHome()">← Home</button>
@@ -53,7 +61,9 @@
 
     <div class="iris-container">
       <div class="menu-header">
-        <h2>What would you like today, love? 💗</h2>
+        <div class="eyebrow">THE MENU · FRESHLY MADE</div>
+        <h2>What sounds good today, love?</h2>
+        <p>Pick something delicious. Lucas will take it from here.</p>
         <div class="category-filters" id="category-filters"></div>
       </div>
 
@@ -87,6 +97,7 @@
           <span class="modal-time" id="modal-time"></span>
           <span class="modal-category" id="modal-category"></span>
         </div>
+        <div id="dish-recipe-sections" class="dish-recipe-sections"></div>
         <button class="modal-add-btn" id="modal-add-btn">Add to Order 🛒</button>
       </div>
     </div>
@@ -97,7 +108,10 @@
     <nav class="navbar chef-nav">
       <button class="back-btn" onclick="goHome()">← Home</button>
       <h1 class="nav-title">👨‍🍳 Chef Lucas's Kitchen</h1>
-      <button class="add-dish-btn" onclick="openAddDish()">+ New Dish</button>
+      <div class="chef-nav-actions">
+        <button class="sign-out-btn" onclick="signOutChef()">Sign out</button>
+        <button class="add-dish-btn requires-sync" onclick="openAddDish()" disabled>+ New Dish</button>
+      </div>
     </nav>
 
     <div class="chef-container">
@@ -115,6 +129,10 @@
       </div>
 
       <div class="chef-panel" id="all-dishes-panel">
+        <div id="local-import" class="local-import" hidden>
+          <span>Found dishes saved only in this browser.</span>
+          <button type="button" onclick="importLocalDishes()">Import to shared menu</button>
+        </div>
         <div id="all-dishes-list" class="dishes-manage-list"></div>
       </div>
     </div>
@@ -123,7 +141,8 @@
     <div class="modal-overlay" id="add-dish-modal" onclick="closeModal(event)">
       <div class="modal-content add-dish-form" onclick="event.stopPropagation()">
         <button class="modal-close" onclick="closeAddDish()">✕</button>
-        <h2>Add New Dish 🍽️</h2>
+        <h2 id="dish-form-title">Add New Dish 🍽️</h2>
+        <p class="form-intro">Add the details yourself or upload your recipe notes. The text and original photos are saved together.</p>
         <form onsubmit="saveDish(event)" id="dish-form">
           <div class="form-group">
             <label>Dish Name</label>
@@ -171,12 +190,26 @@
           <div class="form-group">
             <label>Ingredients (one per line)</label>
             <textarea id="dish-ingredients" required placeholder="200g pasta&#10;100g bacon&#10;2 eggs&#10;..." rows="5"></textarea>
+            <div class="recipe-upload-row">
+              <label class="recipe-upload-btn" for="ingredients-photo">📷 Upload ingredients photo</label>
+              <input type="file" id="ingredients-photo" accept="image/*" onchange="handleRecipePhoto(event, 'ingredients')" hidden>
+              <button type="button" id="ingredients-photo-remove" class="recipe-remove-btn" onclick="removeRecipePhoto('ingredients')" hidden>Remove photo</button>
+            </div>
+            <img id="ingredients-photo-preview" class="recipe-upload-preview" alt="Ingredients photo preview" hidden>
+            <p id="ingredients-ocr-status" class="ocr-status" role="status"></p>
           </div>
           <div class="form-group">
             <label>Recipe Steps (one per line)</label>
             <textarea id="dish-recipe" required placeholder="Boil pasta until al dente&#10;Fry bacon until crispy&#10;..." rows="6"></textarea>
+            <div class="recipe-upload-row">
+              <label class="recipe-upload-btn" for="recipe-photo">📷 Upload steps photo</label>
+              <input type="file" id="recipe-photo" accept="image/*" onchange="handleRecipePhoto(event, 'recipe')" hidden>
+              <button type="button" id="recipe-photo-remove" class="recipe-remove-btn" onclick="removeRecipePhoto('recipe')" hidden>Remove photo</button>
+            </div>
+            <img id="recipe-photo-preview" class="recipe-upload-preview" alt="Recipe steps photo preview" hidden>
+            <p id="recipe-ocr-status" class="ocr-status" role="status"></p>
           </div>
-          <button type="submit" class="save-dish-btn">Save Dish ✨</button>
+          <button type="submit" class="save-dish-btn requires-sync" disabled>Save Dish ✨</button>
         </form>
       </div>
     </div>
@@ -204,7 +237,9 @@
   </div>
 
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <script src="js/firebase-config.js"></script>
   <script src="js/data.js"></script>
   <script src="js/app.js"></script>

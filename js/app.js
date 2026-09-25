@@ -1,6 +1,6 @@
 /* ========================================
    Cooking for Iris — App Logic
-   Firebase real-time sync + localStorage fallback
+   Firebase real-time sync
    ======================================== */
 
 let dishes = [];
@@ -10,16 +10,26 @@ let currentFilter = 'All';
 let currentDishId = null;
 let editingDishId = null;
 let pendingPhotoData = null;
+let pendingIngredientsPhoto = null;
+let pendingRecipePhoto = null;
+let recognizingCount = 0;
+let formSession = 0;
+let savingDish = false;
+let placingOrder = false;
+const recipePhotoVersion = { ingredients: 0, recipe: 0 };
 
 let db = null;
-let useFirebase = false;
+let auth = null;
+let ordersListening = false;
+let dataReady = false;
 let currentPage = 'landing-page';
 
 /* ========================================
-   Data Layer — Firebase + localStorage
+   Data Layer — shared Firebase database
    ======================================== */
 
 function init() {
+  dishes = JSON.parse(JSON.stringify(DEFAULT_DISHES));
   const fbConfigured = typeof FIREBASE_CONFIG !== 'undefined'
     && FIREBASE_CONFIG.apiKey
     && FIREBASE_CONFIG.apiKey.length > 0;
@@ -28,65 +38,68 @@ function init() {
     try {
       firebase.initializeApp(FIREBASE_CONFIG);
       db = firebase.database();
-      useFirebase = true;
-
+      auth = firebase.auth();
+      auth.onAuthStateChanged(user => {
+        if (user && !ordersListening) {
+          ordersListening = true;
+          db.ref('orders').on('value', snap => {
+            const data = snap.val();
+            orders = data ? Object.values(data) : [];
+            orders.sort((a, b) => Number(a.id) - Number(b.id));
+            refreshView();
+          }, error => {
+            ordersListening = false;
+            console.error('Orders are not available to this account', error);
+            showToast('This Google account cannot access kitchen orders.');
+          });
+        } else if (!user && ordersListening) {
+          db.ref('orders').off();
+          ordersListening = false;
+          orders = [];
+          refreshView();
+        }
+      });
       db.ref('dishes').on('value', snap => {
         const data = snap.val();
-        if (data) {
-          dishes = Object.values(data);
-          dishes.sort((a, b) => a.id - b.id);
-        } else {
-          dishes = JSON.parse(JSON.stringify(DEFAULT_DISHES));
-          persistDishes();
-        }
+        const merged = new Map(DEFAULT_DISHES.map(dish => [String(dish.id), { ...dish }]));
+        Object.values(data || {}).forEach(dish => {
+          if (dish && dish.id !== undefined) merged.set(String(dish.id), dish);
+        });
+        dishes = [...merged.values()].filter(dish => !dish.deleted)
+          .sort((a, b) => Number(a.id) - Number(b.id));
+        setSyncStatus('Saved for everyone', true);
         refreshView();
-      });
+      }, handleDataError);
 
-      db.ref('orders').on('value', snap => {
-        const data = snap.val();
-        orders = data ? Object.values(data) : [];
-        orders.sort((a, b) => a.id - b.id);
-        refreshView();
-      });
     } catch (e) {
-      console.warn('Firebase init failed, using localStorage', e);
-      initLocalStorage();
+      handleDataError(e);
     }
   } else {
-    initLocalStorage();
+    handleDataError(new Error('Firebase is not configured or failed to load'));
   }
+  refreshView();
 }
 
-function initLocalStorage() {
-  useFirebase = false;
-  const stored = localStorage.getItem('cfi_dishes');
-  if (stored) {
-    dishes = JSON.parse(stored);
-  } else {
-    dishes = JSON.parse(JSON.stringify(DEFAULT_DISHES));
-    localStorage.setItem('cfi_dishes', JSON.stringify(dishes));
-  }
-  orders = JSON.parse(localStorage.getItem('cfi_orders') || '[]');
+function setSyncStatus(message, ready) {
+  dataReady = ready;
+  const status = document.getElementById('sync-status');
+  status.textContent = message;
+  status.classList.toggle('online', ready);
+  document.querySelectorAll('.requires-sync').forEach(button => { button.disabled = !ready; });
+  updateSaveButton();
+  document.querySelector('.place-order-btn').disabled = !ready || placingOrder;
 }
 
-function persistDishes() {
-  if (useFirebase) {
-    const obj = {};
-    dishes.forEach(d => { obj[d.id] = d; });
-    db.ref('dishes').set(obj);
-  } else {
-    localStorage.setItem('cfi_dishes', JSON.stringify(dishes));
-  }
+function handleDataError(error) {
+  console.error('Shared database error', error);
+  setSyncStatus('Shared database unavailable — changes cannot be saved', false);
+  showToast('Shared database unavailable. Please check Firebase permissions.');
 }
 
-function persistOrders() {
-  if (useFirebase) {
-    const obj = {};
-    orders.forEach(o => { obj[o.id] = o; });
-    db.ref('orders').set(obj);
-  } else {
-    localStorage.setItem('cfi_orders', JSON.stringify(orders));
-  }
+function requireSync() {
+  if (dataReady && db) return true;
+  showToast('Cannot save until the shared database is connected.');
+  return false;
 }
 
 function refreshView() {
@@ -102,11 +115,11 @@ function refreshView() {
 }
 
 function getNextDishId() {
-  return dishes.length ? Math.max(...dishes.map(d => d.id)) + 1 : 1;
+  return Date.now() * 1000 + Math.floor(Math.random() * 1000);
 }
 
 function getNextOrderId() {
-  return orders.length ? Math.max(...orders.map(o => o.id)) + 1 : 1;
+  return Date.now() * 1000 + Math.floor(Math.random() * 1000);
 }
 
 /* ========================================
@@ -114,7 +127,7 @@ function getNextOrderId() {
    ======================================== */
 
 function compressImage(file, maxSize, quality) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
@@ -139,17 +152,36 @@ function compressImage(file, maxSize, quality) {
         ctx.drawImage(img, 0, 0, w, h);
         resolve(canvas.toDataURL('image/jpeg', quality));
       };
+      img.onerror = () => reject(new Error('Invalid image'));
       img.src = e.target.result;
     };
+    reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
 }
 
-function handlePhotoUpload(event) {
+function h(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[char]);
+}
+
+function photoFor(dish) {
+  if (dish.photo) return dish.photo;
+  const original = DEFAULT_DISHES.find(item => item.id === dish.id && item.name === dish.name);
+  return original ? original.photo : '';
+}
+
+function safePhoto(url) {
+  return typeof url === 'string' && (/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(url) || /^images\/[\w-]+\.webp$/.test(url))
+    ? h(url) : '';
+}
+
+async function handlePhotoUpload(event) {
   const file = event.target.files[0];
   if (!file) return;
-
-  compressImage(file, 600, 0.7).then(dataUrl => {
+  try {
+    const dataUrl = await compressImage(file, 900, 0.76);
     pendingPhotoData = dataUrl;
     const preview = document.getElementById('photo-preview');
     const placeholder = document.getElementById('photo-placeholder');
@@ -161,7 +193,90 @@ function handlePhotoUpload(event) {
     placeholder.style.display = 'none';
     removeBtn.style.display = 'flex';
     area.classList.add('has-photo');
-  });
+  } catch (error) {
+    showToast('Could not read that image.');
+  }
+}
+
+async function handleRecipePhoto(event, section) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const session = formSession;
+  let started = false;
+  const prefix = section === 'ingredients' ? 'ingredients' : 'recipe';
+  const version = ++recipePhotoVersion[prefix];
+  const status = document.getElementById(`${prefix}-ocr-status`);
+  try {
+    status.textContent = 'Preparing image…';
+    const dataUrl = await compressImage(file, 1200, 0.78);
+    if (session !== formSession || version !== recipePhotoVersion[prefix]) return;
+    if (section === 'ingredients') pendingIngredientsPhoto = dataUrl;
+    else pendingRecipePhoto = dataUrl;
+    const preview = document.getElementById(`${prefix}-photo-preview`);
+    preview.src = dataUrl;
+    preview.hidden = false;
+    document.getElementById(`${prefix}-photo-remove`).hidden = false;
+    status.textContent = 'Reading text from photo…';
+    recognizingCount++;
+    started = true;
+    updateSaveButton();
+    if (typeof Tesseract === 'undefined') throw new Error('OCR library unavailable');
+    const worker = await Tesseract.createWorker(['eng', 'chi_sim', 'chi_tra']);
+    try {
+      const result = await worker.recognize(file);
+      if (session !== formSession || version !== recipePhotoVersion[prefix]) return;
+      const lines = result.data.text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+      const field = document.getElementById(`dish-${prefix}`);
+      if (lines.length) {
+        field.value = [field.value.trim(), ...lines].filter(Boolean).join('\n');
+        status.textContent = `${lines.length} lines extracted. Please review and edit the text before saving.`;
+      } else {
+        status.textContent = 'No text found. The photo is kept; you can type the text manually.';
+      }
+    } finally {
+      await worker.terminate();
+    }
+  } catch (error) {
+    if (session !== formSession || version !== recipePhotoVersion[prefix]) return;
+    console.warn('Photo OCR failed', error);
+    status.textContent = 'Text extraction failed. The photo is kept; please type the text manually.';
+  } finally {
+    if (started && session === formSession) recognizingCount = Math.max(0, recognizingCount - 1);
+    updateSaveButton();
+  }
+}
+
+function removeRecipePhoto(section) {
+  const prefix = section === 'ingredients' ? 'ingredients' : 'recipe';
+  recipePhotoVersion[prefix]++;
+  if (section === 'ingredients') pendingIngredientsPhoto = '';
+  else pendingRecipePhoto = '';
+  const preview = document.getElementById(`${prefix}-photo-preview`);
+  preview.src = '';
+  preview.hidden = true;
+  document.getElementById(`${prefix}-photo-remove`).hidden = true;
+  document.getElementById(`${prefix}-photo`).value = '';
+  document.getElementById(`${prefix}-ocr-status`).textContent = '';
+}
+
+function resetRecipePhotos() {
+  pendingIngredientsPhoto = null;
+  pendingRecipePhoto = null;
+  for (const section of ['ingredients', 'recipe']) {
+    recipePhotoVersion[section]++;
+    const preview = document.getElementById(`${section}-photo-preview`);
+    preview.src = '';
+    preview.hidden = true;
+    document.getElementById(`${section}-photo-remove`).hidden = true;
+    document.getElementById(`${section}-photo`).value = '';
+    document.getElementById(`${section}-ocr-status`).textContent = '';
+  }
+}
+
+function updateSaveButton() {
+  const button = document.querySelector('#dish-form button[type="submit"]');
+  button.disabled = recognizingCount > 0 || savingDish || !dataReady;
+  button.textContent = savingDish ? 'Saving for everyone…' : recognizingCount > 0 ? 'Reading photo text…' : 'Save Dish ✨';
 }
 
 function removePhoto() {
@@ -197,30 +312,33 @@ function resetPhotoUI() {
 }
 
 function dishTopHtml(dish) {
-  if (dish.photo) {
+  const photo = safePhoto(photoFor(dish));
+  if (photo) {
     return `<div class="dish-card-top has-photo">
-      <span class="dish-category-tag">${dish.category}</span>
-      <img class="dish-card-photo" src="${dish.photo}" alt="${dish.name}" loading="lazy">
+      <span class="dish-category-tag">${h(dish.category)}</span>
+      <img class="dish-card-photo" src="${photo}" alt="${h(dish.name)}" loading="lazy">
     </div>`;
   }
   return `<div class="dish-card-top">
-    <span class="dish-category-tag">${dish.category}</span>
-    <span class="dish-emoji">${dish.emoji}</span>
+    <span class="dish-category-tag">${h(dish.category)}</span>
+    <span class="dish-emoji">${h(dish.emoji)}</span>
   </div>`;
 }
 
 function dishHeroHtml(dish) {
-  if (dish.photo) {
-    return `<img class="modal-hero-img" src="${dish.photo}" alt="${dish.name}">`;
+  const photo = safePhoto(photoFor(dish));
+  if (photo) {
+    return `<img class="modal-hero-img" src="${photo}" alt="${h(dish.name)}">`;
   }
-  return `<span class="modal-hero-emoji">${dish.emoji}</span>`;
+  return `<span class="modal-hero-emoji">${h(dish.emoji)}</span>`;
 }
 
 function cartItemVisual(dish) {
-  if (dish.photo) {
-    return `<img class="cart-item-photo" src="${dish.photo}" alt="${dish.name}">`;
+  const photo = safePhoto(photoFor(dish));
+  if (photo) {
+    return `<img class="cart-item-photo" src="${photo}" alt="${h(dish.name)}">`;
   }
-  return `<span class="cart-item-emoji">${dish.emoji}</span>`;
+  return `<span class="cart-item-emoji">${h(dish.emoji)}</span>`;
 }
 
 /* ========================================
@@ -233,13 +351,26 @@ function showPage(pageId) {
   currentPage = pageId;
 }
 
-function enterAs(role) {
+async function enterAs(role) {
   if (role === 'iris') {
     showPage('iris-page');
     renderCategoryFilters();
     renderMenu();
     renderCart();
   } else {
+    if (!auth) {
+      showToast('Firebase sign-in is unavailable.');
+      return;
+    }
+    if (!auth.currentUser) {
+      try {
+        await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+      } catch (error) {
+        console.error('Chef sign-in failed', error);
+        showToast('Could not sign in. Check Google sign-in in Firebase.');
+        return;
+      }
+    }
     showPage('chef-page');
     renderOrders();
     renderAllDishes();
@@ -265,10 +396,10 @@ function getCategories() {
 function renderCategoryFilters() {
   const container = document.getElementById('category-filters');
   const categories = getCategories();
-  container.innerHTML = categories.map(cat => `
+  container.innerHTML = categories.map((cat, index) => `
     <button class="cat-filter ${cat === currentFilter ? 'active' : ''}"
-            onclick="filterCategory('${cat}')">
-      ${cat}
+            onclick="filterCategory(getCategories()[${index}])">
+      ${h(cat)}
     </button>
   `).join('');
 }
@@ -295,14 +426,14 @@ function renderMenu() {
   }
 
   grid.innerHTML = filtered.map((dish, i) => `
-    <div class="dish-card" style="animation-delay: ${i * 0.05}s" onclick="openDishDetail(${dish.id})">
+    <div class="dish-card" style="animation-delay: ${i * 0.05}s" onclick="openDishDetail(${Number(dish.id)})">
       ${dishTopHtml(dish)}
       <div class="dish-card-body">
-        <h3>${dish.name}</h3>
-        <p>${dish.description}</p>
+        <h3>${h(dish.name)}</h3>
+        <p>${h(dish.description)}</p>
         <div class="dish-meta">
-          <span class="dish-time">⏱ ${dish.cookTime}</span>
-          <button class="dish-add-btn" onclick="event.stopPropagation(); addToCart(${dish.id})" title="Add to order">+</button>
+          <span class="dish-time">⏱ ${h(dish.cookTime)}</span>
+          <button class="dish-add-btn" onclick="event.stopPropagation(); addToCart(${Number(dish.id)})" title="Add to order">+</button>
         </div>
       </div>
     </div>
@@ -323,6 +454,7 @@ function openDishDetail(id) {
   document.getElementById('modal-description').textContent = dish.description;
   document.getElementById('modal-time').textContent = '⏱ ' + dish.cookTime;
   document.getElementById('modal-category').textContent = dish.category;
+  document.getElementById('dish-recipe-sections').innerHTML = recipeSectionsHtml(dish);
 
   const btn = document.getElementById('modal-add-btn');
   btn.onclick = () => {
@@ -333,13 +465,50 @@ function openDishDetail(id) {
   document.getElementById('dish-modal').classList.add('open');
 }
 
+async function signOutChef() {
+  if (auth) await auth.signOut();
+  goHome();
+}
+
+function recipeSectionsHtml(dish) {
+  return sectionHtml('Ingredients', dish.ingredients || [], dish.ingredientsPhoto, false)
+    + sectionHtml('Recipe steps', dish.recipe || [], dish.recipePhoto, true);
+}
+
+function sectionHtml(title, lines, photo, numbered) {
+  const image = safePhoto(photo);
+  const textHtml = numbered
+    ? `<ol class="recipe-steps">${lines.map(line => `<li>${h(line)}</li>`).join('')}</ol>`
+    : `<ul class="ingredient-list">${lines.map(line => `<li>${h(line)}</li>`).join('')}</ul>`;
+  return `<section class="recipe-section photo-text-section">
+    <div class="recipe-section-heading"><h4>${h(title)}</h4>
+      ${image ? `<div class="view-switch" role="group" aria-label="${h(title)} view">
+        <button type="button" class="active" onclick="showRecipeView(this, 'text')">Text</button>
+        <button type="button" onclick="showRecipeView(this, 'photo')">Photo</button>
+      </div>` : ''}
+    </div>
+    <div class="recipe-text-view">${textHtml}</div>
+    ${image ? `<div class="recipe-photo-view" hidden><img src="${image}" alt="${h(title)} photo" loading="lazy"></div>` : ''}
+  </section>`;
+}
+
+function showRecipeView(button, view) {
+  const section = button.closest('.photo-text-section');
+  section.querySelector('.recipe-text-view').hidden = view !== 'text';
+  section.querySelector('.recipe-photo-view').hidden = view !== 'photo';
+  section.querySelectorAll('.view-switch button').forEach(item => {
+    item.classList.toggle('active', item === button);
+  });
+}
+
 function closeDishModal() {
   document.getElementById('dish-modal').classList.remove('open');
 }
 
 function closeModal(e) {
   if (e.target.classList.contains('modal-overlay')) {
-    e.target.classList.remove('open');
+    if (e.target.id === 'add-dish-modal') closeAddDish();
+    else e.target.classList.remove('open');
   }
 }
 
@@ -395,13 +564,13 @@ function renderCart() {
       <div class="cart-item">
         ${cartItemVisual(dish)}
         <div class="cart-item-info">
-          <h4>${dish.name}</h4>
-          <p>${dish.category}</p>
+          <h4>${h(dish.name)}</h4>
+          <p>${h(dish.category)}</p>
         </div>
         <div class="cart-qty">
-          <button class="qty-btn" onclick="updateCartQty(${item.dishId}, -1)">−</button>
+          <button class="qty-btn" onclick="updateCartQty(${Number(item.dishId)}, -1)">−</button>
           <span class="qty-num">${item.qty}</span>
-          <button class="qty-btn" onclick="updateCartQty(${item.dishId}, 1)">+</button>
+          <button class="qty-btn" onclick="updateCartQty(${Number(item.dishId)}, 1)">+</button>
         </div>
       </div>`;
   }).join('');
@@ -416,8 +585,11 @@ function toggleCart() {
    Iris — Place Order
    ======================================== */
 
-function placeOrder() {
-  if (!cart.length) return;
+async function placeOrder() {
+  if (!cart.length || placingOrder) return;
+  if (!requireSync()) return;
+  placingOrder = true;
+  document.querySelector('.place-order-btn').disabled = true;
 
   const notes = document.getElementById('order-notes').value.trim();
   const order = {
@@ -428,8 +600,15 @@ function placeOrder() {
     timestamp: new Date().toISOString()
   };
 
-  orders.push(order);
-  persistOrders();
+  try {
+    await db.ref(`orders/${order.id}`).set(order);
+  } catch (error) {
+    handleDataError(error);
+    placingOrder = false;
+    return;
+  }
+
+  placingOrder = false;
 
   cart = [];
   document.getElementById('order-notes').value = '';
@@ -437,6 +616,7 @@ function placeOrder() {
   toggleCart();
 
   document.getElementById('order-success').classList.add('open');
+  document.querySelector('.place-order-btn').disabled = !dataReady;
 }
 
 function closeOrderSuccess() {
@@ -476,25 +656,25 @@ function renderOrders() {
 
     const itemChips = order.items.map(item => {
       const dish = dishes.find(d => d.id === item.dishId);
-      return dish ? `<span class="order-item-chip">${dish.emoji} ${dish.name} × ${item.qty}</span>` : '';
+      return dish ? `<span class="order-item-chip">${h(dish.emoji)} ${h(dish.name)} × ${Number(item.qty) || 1}</span>` : '';
     }).join('');
 
     const notesHtml = order.notes
-      ? `<div class="order-notes-preview">💌 "${order.notes}"</div>`
+      ? `<div class="order-notes-preview">💌 "${h(order.notes)}"</div>`
       : '';
 
     const actionsHtml = order.status === 'done'
-      ? `<button class="order-action-btn view-recipe-btn" onclick="viewOrderRecipe(${order.id})">📖 View Recipe</button>
-         <button class="order-action-btn delete-order-btn" onclick="deleteOrder(${order.id})">🗑 Remove</button>`
-      : `<button class="order-action-btn view-recipe-btn" onclick="viewOrderRecipe(${order.id})">📖 Recipe & Ingredients</button>
-         <button class="order-action-btn mark-done-btn" onclick="markOrderStatus(${order.id})">${order.status === 'pending' ? '🍳 Start Cooking' : '✅ Mark Done'}</button>
-         <button class="order-action-btn delete-order-btn" onclick="deleteOrder(${order.id})">🗑</button>`;
+      ? `<button class="order-action-btn view-recipe-btn" onclick="viewOrderRecipe(${Number(order.id)})">📖 View Recipe</button>
+         <button class="order-action-btn delete-order-btn" onclick="deleteOrder(${Number(order.id)})">🗑 Remove</button>`
+      : `<button class="order-action-btn view-recipe-btn" onclick="viewOrderRecipe(${Number(order.id)})">📖 Recipe & Ingredients</button>
+         <button class="order-action-btn mark-done-btn" onclick="markOrderStatus(${Number(order.id)})">${order.status === 'pending' ? '🍳 Start Cooking' : '✅ Mark Done'}</button>
+         <button class="order-action-btn delete-order-btn" onclick="deleteOrder(${Number(order.id)})">🗑</button>`;
 
     return `
       <div class="order-card ${order.status === 'done' ? 'completed' : ''}">
         <div class="order-card-header">
           <div>
-            <h3>Order #${order.id}</h3>
+            <h3>Order #${h(order.id)}</h3>
             <span class="order-time">${timeStr}</span>
           </div>
           <span class="order-status ${statusClass}">${statusLabel}</span>
@@ -506,29 +686,27 @@ function renderOrders() {
   }).join('');
 }
 
-function markOrderStatus(id) {
+async function markOrderStatus(id) {
   const order = orders.find(o => o.id === id);
   if (!order) return;
-
-  if (order.status === 'pending') {
-    order.status = 'cooking';
-    showToast('Started cooking! 🍳');
-  } else if (order.status === 'cooking') {
-    order.status = 'done';
-    showToast('Order complete! ✅');
+  if (!requireSync()) return;
+  const nextStatus = order.status === 'pending' ? 'cooking' : 'done';
+  try {
+    await db.ref(`orders/${id}/status`).set(nextStatus);
+    showToast(nextStatus === 'cooking' ? 'Started cooking! 🍳' : 'Order complete! ✅');
+  } catch (error) {
+    handleDataError(error);
   }
-
-  persistOrders();
-  renderOrders();
-  updateOrderBadge();
 }
 
-function deleteOrder(id) {
-  orders = orders.filter(o => o.id !== id);
-  persistOrders();
-  renderOrders();
-  updateOrderBadge();
-  showToast('Order removed');
+async function deleteOrder(id) {
+  if (!requireSync()) return;
+  try {
+    await db.ref(`orders/${id}`).remove();
+    showToast('Order removed');
+  } catch (error) {
+    handleDataError(error);
+  }
 }
 
 function updateOrderBadge() {
@@ -550,49 +728,35 @@ function viewOrderRecipe(orderId) {
     const dish = dishes.find(d => d.id === item.dishId);
     if (!dish) return '';
 
-    const photoHtml = dish.photo
-      ? `<img class="recipe-dish-photo" src="${dish.photo}" alt="${dish.name}">`
+    const photo = safePhoto(photoFor(dish));
+    const photoHtml = photo
+      ? `<img class="recipe-dish-photo" src="${photo}" alt="${h(dish.name)}">`
       : '';
-
-    const ingredientsHtml = dish.ingredients.map(ing =>
-      `<li>${ing}</li>`
-    ).join('');
-
-    const stepsHtml = dish.recipe.map(step =>
-      `<li>${step}</li>`
-    ).join('');
 
     return `
       <div class="recipe-dish">
         ${photoHtml}
         <div class="recipe-header">
-          <span class="r-emoji">${dish.emoji}</span>
+          <span class="r-emoji">${h(dish.emoji)}</span>
           <div>
-            <h3>${dish.name}</h3>
+            <h3>${h(dish.name)}</h3>
             <span class="r-qty">Quantity: ${item.qty} · ⏱ ${dish.cookTime}</span>
           </div>
         </div>
-        <div class="recipe-section">
-          <h4>🛒 Ingredients</h4>
-          <ul class="ingredient-list">${ingredientsHtml}</ul>
-        </div>
-        <div class="recipe-section">
-          <h4>👨‍🍳 Recipe Steps</h4>
-          <ol class="recipe-steps">${stepsHtml}</ol>
-        </div>
+        ${recipeSectionsHtml(dish)}
       </div>`;
   }).join('');
 
   const notesHtml = order.notes
     ? `<div class="order-detail-notes">
         <h4>💌 Iris's Note</h4>
-        <p>${order.notes}</p>
+        <p>${h(order.notes)}</p>
        </div>`
     : '';
 
   content.innerHTML = `
     <h2 style="font-family:'Playfair Display',serif; text-align:center; margin-bottom:1.5rem; color:var(--dark-brown);">
-      Order #${order.id} — Recipe Card 📖
+      Order #${h(order.id)} — Recipe Card 📖
     </h2>
     ${dishesHtml}
     ${notesHtml}
@@ -611,23 +775,65 @@ function closeOrderDetail() {
 
 function renderAllDishes() {
   const list = document.getElementById('all-dishes-list');
+  const local = getLocalDishesToImport();
+  const banner = document.getElementById('local-import');
+  banner.hidden = !local.length || !dataReady;
+  banner.querySelector('span').textContent = `${local.length} dish${local.length === 1 ? '' : 'es'} saved only in this browser.`;
 
   list.innerHTML = dishes.map(dish => {
-    const visual = dish.photo
-      ? `<img class="manage-dish-photo" src="${dish.photo}" alt="${dish.name}">`
-      : `<div class="manage-dish-emoji">${dish.emoji}</div>`;
+    const photo = safePhoto(photoFor(dish));
+    const visual = photo
+      ? `<img class="manage-dish-photo" src="${photo}" alt="${h(dish.name)}">`
+      : `<div class="manage-dish-emoji">${h(dish.emoji)}</div>`;
 
     return `
       <div class="manage-dish-card">
         ${visual}
-        <h3>${dish.name}</h3>
-        <p class="dish-cat">${dish.category} · ⏱ ${dish.cookTime}</p>
+        <h3>${h(dish.name)}</h3>
+        <p class="dish-cat">${h(dish.category)} · ⏱ ${h(dish.cookTime)}</p>
         <div class="manage-dish-actions">
-          <button class="edit-dish-btn" onclick="editDish(${dish.id})">✏️ Edit</button>
-          <button class="delete-dish-btn" onclick="deleteDish(${dish.id})">🗑 Delete</button>
+          <button class="edit-dish-btn" onclick="editDish(${Number(dish.id)})">✏️ Edit</button>
+          <button class="delete-dish-btn" onclick="deleteDish(${Number(dish.id)})">🗑 Delete</button>
         </div>
       </div>`;
   }).join('');
+}
+
+function getLocalDishesToImport() {
+  try {
+    const stored = JSON.parse(localStorage.getItem('cfi_dishes') || '[]');
+    if (!Array.isArray(stored)) return [];
+    return stored.filter(item => {
+      if (!item || !item.name || dishes.some(dish => dish.name === item.name)) return false;
+      const original = DEFAULT_DISHES.find(dish => dish.name === item.name);
+      return !original || JSON.stringify([item.description, item.ingredients, item.recipe])
+        !== JSON.stringify([original.description, original.ingredients, original.recipe]);
+    });
+  } catch (error) {
+    return [];
+  }
+}
+
+async function importLocalDishes() {
+  if (!requireSync() || !auth?.currentUser) return;
+  const items = getLocalDishesToImport();
+  if (!items.length) return;
+  const button = document.querySelector('#local-import button');
+  button.disabled = true;
+  button.textContent = 'Importing…';
+  try {
+    for (const item of items) {
+      const id = getNextDishId();
+      await db.ref(`dishes/${id}`).set({ ...item, id });
+    }
+    showToast(`${items.length} dish${items.length === 1 ? '' : 'es'} imported for everyone!`);
+    renderAllDishes();
+  } catch (error) {
+    handleDataError(error);
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Import to shared menu';
+  }
 }
 
 function switchChefTab(tab) {
@@ -646,13 +852,20 @@ function switchChefTab(tab) {
    ======================================== */
 
 function openAddDish() {
+  if (!requireSync()) return;
+  formSession++;
   editingDishId = null;
   document.getElementById('dish-form').reset();
   resetPhotoUI();
+  resetRecipePhotos();
+  document.getElementById('dish-form-title').textContent = 'Add New Dish 🍽️';
+  updateSaveButton();
   document.getElementById('add-dish-modal').classList.add('open');
 }
 
 function editDish(id) {
+  if (!requireSync()) return;
+  formSession++;
   const dish = dishes.find(d => d.id === id);
   if (!dish) return;
 
@@ -666,6 +879,15 @@ function editDish(id) {
   document.getElementById('dish-recipe').value = dish.recipe.join('\n');
 
   resetPhotoUI();
+  resetRecipePhotos();
+  for (const section of ['ingredients', 'recipe']) {
+    const value = dish[`${section}Photo`];
+    if (!value) continue;
+    const preview = document.getElementById(`${section}-photo-preview`);
+    preview.src = value;
+    preview.hidden = false;
+    document.getElementById(`${section}-photo-remove`).hidden = false;
+  }
   if (dish.photo) {
     pendingPhotoData = dish.photo;
     const preview = document.getElementById('photo-preview');
@@ -680,17 +902,23 @@ function editDish(id) {
     area.classList.add('has-photo');
   }
 
+  document.getElementById('dish-form-title').textContent = 'Edit Dish 🍽️';
+  updateSaveButton();
   document.getElementById('add-dish-modal').classList.add('open');
 }
 
 function closeAddDish() {
+  formSession++;
+  recognizingCount = 0;
   document.getElementById('add-dish-modal').classList.remove('open');
   editingDishId = null;
   resetPhotoUI();
+  resetRecipePhotos();
 }
 
-function saveDish(e) {
+async function saveDish(e) {
   e.preventDefault();
+  if (!requireSync() || recognizingCount > 0) return;
 
   const name = document.getElementById('dish-name').value.trim();
   const emoji = document.getElementById('dish-emoji').value.trim();
@@ -702,38 +930,46 @@ function saveDish(e) {
   const recipe = document.getElementById('dish-recipe').value
     .split('\n').map(s => s.trim()).filter(Boolean);
 
-  if (editingDishId) {
-    const dish = dishes.find(d => d.id === editingDishId);
-    if (dish) {
-      Object.assign(dish, { name, emoji, category, description, cookTime, ingredients, recipe });
-      if (pendingPhotoData !== null) {
-        dish.photo = pendingPhotoData || '';
-      }
-    }
-    showToast('Dish updated! ✨');
-  } else {
-    const newDish = {
-      id: getNextDishId(),
-      name, emoji, category, description, cookTime, ingredients, recipe
-    };
-    if (pendingPhotoData) {
-      newDish.photo = pendingPhotoData;
-    }
-    dishes.push(newDish);
-    showToast('New dish added! 🍽️');
+  if (!ingredients.length || !recipe.length) {
+    showToast('Please add ingredients and steps, or upload clear photos to extract them.');
+    return;
   }
 
-  persistDishes();
-  renderAllDishes();
-  closeAddDish();
+  const existing = editingDishId ? dishes.find(d => d.id === editingDishId) : null;
+  const dish = {
+    ...(existing || {}),
+    id: existing ? existing.id : getNextDishId(),
+    name, emoji, category, description, cookTime, ingredients, recipe
+  };
+  if (pendingPhotoData !== null) dish.photo = pendingPhotoData || '';
+  if (pendingIngredientsPhoto !== null) dish.ingredientsPhoto = pendingIngredientsPhoto || '';
+  if (pendingRecipePhoto !== null) dish.recipePhoto = pendingRecipePhoto || '';
+
+  savingDish = true;
+  updateSaveButton();
+  try {
+    await db.ref(`dishes/${dish.id}`).set(dish);
+    showToast(existing ? 'Dish updated for everyone! ✨' : 'New dish saved for everyone! 🍽️');
+    closeAddDish();
+  } catch (error) {
+    handleDataError(error);
+  } finally {
+    savingDish = false;
+    updateSaveButton();
+  }
 }
 
-function deleteDish(id) {
+async function deleteDish(id) {
   if (!confirm('Are you sure you want to remove this dish?')) return;
-  dishes = dishes.filter(d => d.id !== id);
-  persistDishes();
-  renderAllDishes();
-  showToast('Dish removed');
+  if (!requireSync()) return;
+  try {
+    const isDefault = DEFAULT_DISHES.some(dish => dish.id === id);
+    if (isDefault) await db.ref(`dishes/${id}`).set({ id, deleted: true });
+    else await db.ref(`dishes/${id}`).remove();
+    showToast('Dish removed for everyone');
+  } catch (error) {
+    handleDataError(error);
+  }
 }
 
 /* ========================================
