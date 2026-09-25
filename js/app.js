@@ -17,6 +17,7 @@ let formSession = 0;
 let savingDish = false;
 let placingOrder = false;
 const recipePhotoVersion = { ingredients: 0, recipe: 0 };
+let ocrLoader = null;
 
 let db = null;
 let auth = null;
@@ -160,6 +161,23 @@ function compressImage(file, maxSize, quality) {
   });
 }
 
+function loadOcr() {
+  if (typeof Tesseract !== 'undefined') return Promise.resolve();
+  if (!ocrLoader) {
+    ocrLoader = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+      script.onload = resolve;
+      script.onerror = () => reject(new Error('OCR library unavailable'));
+      document.head.appendChild(script);
+    }).catch(error => {
+      ocrLoader = null;
+      throw error;
+    });
+  }
+  return ocrLoader;
+}
+
 function h(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -220,7 +238,7 @@ async function handleRecipePhoto(event, section) {
     recognizingCount++;
     started = true;
     updateSaveButton();
-    if (typeof Tesseract === 'undefined') throw new Error('OCR library unavailable');
+    await loadOcr();
     const worker = await Tesseract.createWorker(['eng', 'chi_sim', 'chi_tra']);
     try {
       const result = await worker.recognize(file);
