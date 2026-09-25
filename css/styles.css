@@ -1756,7 +1756,8 @@ button:disabled { opacity: .55; cursor: not-allowed; transform: none !important;
 .local-import { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1.3rem; padding: 1rem 1.2rem; border: 1px solid #e5d4bd; border-radius: 14px; background: #fff9e9; color: var(--warm-brown); font-size: .85rem; }
 
 @media (max-width: 900px) {
-  .landing-content { grid-template-columns: 1fr; text-align: center; padding: 5rem 1.5rem 7rem; }
+  #landing-page { align-items: flex-start; overflow: visible; }
+  .landing-content { grid-template-columns: 1fr; text-align: center; padding: 4rem 1.5rem 7rem; }
   .landing-subtitle { margin-left: auto; margin-right: auto; }
   .landing-cards { justify-content: center; }
   .landing-feature { width: min(450px, 80%); margin: 0 auto; }
