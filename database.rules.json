@@ -4,7 +4,7 @@
       ".read": true,
       "$dishId": {
         ".write": "auth != null && auth.uid === 'REPLACE_WITH_CHEF_FIREBASE_UID'",
-        ".validate": "newData.child('deleted').val() === true || newData.hasChildren(['id', 'name', 'emoji', 'category', 'description', 'cookTime', 'ingredients', 'recipe'])"
+        ".validate": "newData.hasChildren(['id', 'name', 'emoji', 'category', 'description', 'cookTime', 'ingredients', 'recipe'])"
       }
     },
     "orders": {

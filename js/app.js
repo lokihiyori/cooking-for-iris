@@ -62,11 +62,7 @@ function init() {
       });
       db.ref('dishes').on('value', snap => {
         const data = snap.val();
-        const merged = new Map(DEFAULT_DISHES.map(dish => [String(dish.id), { ...dish }]));
-        Object.values(data || {}).forEach(dish => {
-          if (dish && dish.id !== undefined) merged.set(String(dish.id), dish);
-        });
-        dishes = [...merged.values()].filter(dish => !dish.deleted)
+        dishes = Object.values(data || {}).filter(dish => dish && !dish.deleted)
           .sort((a, b) => Number(a.id) - Number(b.id));
         setSyncStatus('Saved for everyone', true);
         refreshView();
@@ -981,9 +977,7 @@ async function deleteDish(id) {
   if (!confirm('Are you sure you want to remove this dish?')) return;
   if (!requireSync()) return;
   try {
-    const isDefault = DEFAULT_DISHES.some(dish => dish.id === id);
-    if (isDefault) await db.ref(`dishes/${id}`).set({ id, deleted: true });
-    else await db.ref(`dishes/${id}`).remove();
+    await db.ref(`dishes/${id}`).remove();
     showToast('Dish removed for everyone');
   } catch (error) {
     handleDataError(error);
